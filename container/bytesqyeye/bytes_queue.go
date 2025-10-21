@@ -3,6 +3,8 @@ package bytesqyeye
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"time"
 )
 
 // 使用 Bytes 模仿RingBuffer
@@ -20,10 +22,6 @@ var (
 	errIndexOutOfBounds = errors.New("index out of bounds")
 	errFullQueue        = errors.New("queue is full, Maximum size limit reached")
 )
-
-type queueError struct {
-	message string
-}
 
 // BytesQueue is a non-thead safe queue type of fifo based on bytes array
 // for every  push operation index of entry is returned. It can be used to read the entry later
@@ -102,7 +100,7 @@ func (q *BytesQueue) Push(entry []byte) (int, error) {
 			return -1, errFullQueue
 		} else {
 			// 扩容
-
+			q.allocateAdditionalMemory(neededSize)
 		}
 	}
 
@@ -116,7 +114,56 @@ func (q *BytesQueue) Push(entry []byte) (int, error) {
 // allocateAdditionalMemory 为BytesQueue 分配额外的内存，使其容量至少能容纳minimum字节。
 // 该方法在当前容量不足时被调用 （例如Push 空间不够）
 // 扩容策略： 至少翻倍，但是不超过maxCapacity （如果设置）
-func (q *BytesQueue) allocateAdditionalMemory(minimum int) {}
+func (q *BytesQueue) allocateAdditionalMemory(minimum int) {
+	// 扩容开始时间
+	start := time.Now()
+
+	// 1. 确保新容量至少比 minimum 大
+	if q.capacity < minimum {
+		q.capacity += minimum
+	}
+
+	// 2. 将容量翻倍，避免频繁的扩容
+	q.capacity *= 2
+
+	// 3. 确保新容量不超过maxCapacity
+	if q.maxCapacity > 0 && q.capacity > q.maxCapacity {
+		q.capacity = q.maxCapacity
+	}
+
+	// 4. 保存旧数组指针，用于后续数据迁移
+	oldArray := q.array
+
+	// 5. 创建新的数组，大小为旧数组的2倍
+	q.array = make([]byte, q.capacity)
+
+	// 6. 判断是否需要迁移旧数据
+	// leftMarginIndex 是一个常量（通常为 0, 这里为1），q.rightMargin 表示已使用数据的右边界
+	if leftMarginIndex != q.rightMargin {
+		// 6.1 将旧数组中 [0, q.rightMargin) 区间内的数据复制到新数组中
+		copy(q.array, oldArray[:q.rightMargin])
+
+		// 6.2 处理环形队列已回绕的情况：即 tail <= head 的情况
+		if q.tail <= q.head {
+			if q.tail != q.head {
+				// 创建空闲区，并使用空slice填充
+				q.push(make([]byte, q.head-q.tail), q.head-q.tail)
+			}
+			// 6.3 重置 head 和 tail 指针
+			// - head 移动到新数组的左侧
+			// - tail 移动到新数组的右侧
+			q.head = leftMarginIndex
+			q.tail = q.rightMargin
+		}
+		// else: 如果tail > head 数据已经连续不需要进行处理
+	}
+	// 7. 表级队列容量不满
+	q.full = false
+	// 8. 若使用verbose模式，打印扩容耗时和新容量信息
+	if q.verbose {
+		fmt.Printf("Expanding queue to %d bytes in %f\n", q.capacity, time.Since(start).Seconds())
+	}
+}
 
 func (q *BytesQueue) push(data []byte, len int) {
 	headerEntrySize := binary.PutUvarint(q.headerBuffer, uint64(len))
@@ -162,4 +209,90 @@ func (q *BytesQueue) canInsertBeforeHead(need int) bool {
 	}
 
 	return q.head-q.tail == need || q.head-q.tail >= need+minimumHeaderSize
+}
+
+// Pop removes the first entry from the queue (FIFO order) and returns its data.
+// It also updates the head pointer and decrements the count of elements.
+// If the head reaches the right margin after popping, it resets the head and potentially
+// the tail to the left margin to maintain ring buffer behavior.
+// This method sets the 'full' flag to false since an element has been removed.
+func (q *BytesQueue) Pop() ([]byte, error) {
+	// Read the data at the current head position without removing it yet
+	data, blockSize, err := q.peek(q.head)
+	if err != nil {
+		return nil, err
+	}
+
+	// Move the head forward by the size of the block that was just read
+	q.head += blockSize
+	q.count--
+
+	// If head reaches right margin, reset pointers to maintain ring structure
+	// 如果数据弹空了，则将head 移动到leftMarginIndex
+	if q.head == q.rightMargin {
+		q.head = leftMarginIndex
+		if q.tail == q.rightMargin {
+			q.tail = leftMarginIndex
+		}
+		q.rightMargin = q.tail
+	}
+
+	// Since we've popped an item, the queue cannot be full anymore
+	q.full = false
+
+	return data, nil
+}
+
+// Peek reads the oldest entry from list  without moving head pointer
+func (q *BytesQueue) Peek() ([]byte, error) {
+	data, _, err := q.peek(q.head)
+	return data, err
+}
+
+// Get reads entry from index
+func (q *BytesQueue) Get(index int) ([]byte, error) {
+	data, _, err := q.peek(index)
+	return data, err
+}
+
+// CheckGet checks if an entry can be read from index
+func (q *BytesQueue) CheckGet(index int) error {
+	return q.peekCheckErr(index)
+}
+
+// Capacity returns the numbers of allocated bytes for queue
+func (q *BytesQueue) Capacity() int {
+	return q.capacity
+}
+
+// Len returns the number of elements in the queue
+func (q *BytesQueue) Len() int {
+	return q.count
+}
+
+// peekCheckErr is identical to peek, but dost not actually pops the entry
+func (q *BytesQueue) peekCheckErr(index int) error {
+	if q.count == 0 {
+		return errEmptyQueue
+	}
+	if index <= 0 {
+		return errInvalidIndex
+	}
+	if index >= len(q.array) {
+		return errIndexOutOfBounds
+	}
+	return nil
+}
+
+// Peek returns the data from index and the number of bytes to encode the length of the data in uvarint format
+func (q *BytesQueue) peek(index int) ([]byte, int, error) {
+	err := q.peekCheckErr(index)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// [size][entry]， n 代表size的长度
+	blockSize, n := binary.Uvarint(q.array[index:])
+	return q.array[index+n : index+int(blockSize)], int(blockSize), nil
+
 }
