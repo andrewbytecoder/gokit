@@ -1,0 +1,1073 @@
+package bigcache
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"math"
+	"math/rand"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/andrewbytecoder/gokit/clock"
+	"github.com/andrewbytecoder/gokit/hash"
+	"github.com/andrewbytecoder/gokit/logger"
+	"go.uber.org/zap"
+)
+
+func TestWriteAndGetOnCache(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), DefaultConfig(5*time.Second))
+	value := []byte("value")
+
+	// when
+	cache.Set("key", value)
+	cachedValue, err := cache.Get("key")
+
+	// then
+	noError(t, err)
+	assertEqual(t, value, cachedValue)
+}
+
+func TestAppendAndGetOnCache(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), DefaultConfig(5*time.Second))
+	key := "key"
+	value1 := make([]byte, 50)
+	rand.Read(value1)
+	value2 := make([]byte, 50)
+	rand.Read(value2)
+	value3 := make([]byte, 50)
+	rand.Read(value3)
+
+	// when
+	_, err := cache.Get(key)
+
+	// then
+	assertEqual(t, ErrEntryNotFound, err)
+
+	// when
+	cache.Append(key, value1)
+	cachedValue, err := cache.Get(key)
+
+	// then
+	noError(t, err)
+	assertEqual(t, value1, cachedValue)
+
+	// when
+	cache.Append(key, value2)
+	cachedValue, err = cache.Get(key)
+
+	// then
+	noError(t, err)
+	expectedValue := value1
+	expectedValue = append(expectedValue, value2...)
+	assertEqual(t, expectedValue, cachedValue)
+
+	// when
+	cache.Append(key, value3)
+	cachedValue, err = cache.Get(key)
+
+	// then
+	noError(t, err)
+	expectedValue = value1
+	expectedValue = append(expectedValue, value2...)
+	expectedValue = append(expectedValue, value3...)
+	assertEqual(t, expectedValue, cachedValue)
+}
+
+// TestAppendRandomly does simultaneous appends to check for corruption errors.
+func TestAppendRandomly(t *testing.T) {
+	t.Parallel()
+
+	logger, err := logger.CreateProductZapLogger(
+		logger.SetLogLevel(zap.InfoLevel),
+		logger.SetLogMaxSize(100),
+		logger.SetLogMaxAge(30),
+		logger.SetLogCompress(true),
+		logger.SetConsoleWriterSyncer(true),
+		logger.SetLogFilename("bigcache.log"),
+		logger.SetLogMaxBackups(10),
+		logger.SetLogLevelKey("bigcache"),
+	)
+
+	c := Config{
+		Shards:             1,
+		LifeWindow:         5 * time.Second,
+		CleanWindow:        1 * time.Second,
+		MaxEntriesInWindow: 1000 * 10 * 60,
+		MaxEntrySize:       500,
+		StatsEnabled:       true,
+		Verbose:            true,
+		Hasher:             hash.NewFnv64(),
+		HardMaxCacheSize:   1,
+		Logger:             logger,
+	}
+	cache, err := New(context.Background(), c)
+	noError(t, err)
+
+	nKeys := 5
+	nAppendsPerKey := 2000
+	nWorker := 10
+	var keys []string
+	for i := 0; i < nKeys; i++ {
+		for j := 0; j < nAppendsPerKey; j++ {
+			keys = append(keys, fmt.Sprintf("key%d", i))
+		}
+	}
+	rand.Shuffle(len(keys), func(i, j int) {
+		keys[i], keys[j] = keys[j], keys[i]
+	})
+
+	jobs := make(chan string, len(keys))
+	for _, key := range keys {
+		jobs <- key
+	}
+	close(jobs)
+
+	var wg sync.WaitGroup
+	for i := 0; i < nWorker; i++ {
+		wg.Add(1)
+		go func() {
+			for {
+				key, ok := <-jobs
+				if !ok {
+					break
+				}
+				cache.Append(key, []byte(key))
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+
+	assertEqual(t, nKeys, cache.Len())
+	for i := 0; i < nKeys; i++ {
+		key := fmt.Sprintf("key%d", i)
+		expectedValue := []byte(strings.Repeat(key, nAppendsPerKey))
+		cachedValue, err := cache.Get(key)
+		noError(t, err)
+		assertEqual(t, expectedValue, cachedValue)
+	}
+}
+
+type hashStub uint64
+
+func (stub hashStub) Sum64(_ string) uint64 {
+	return uint64(stub)
+}
+
+func TestAppendCollision(t *testing.T) {
+	t.Parallel()
+	logger, err := logger.CreateProductZapLogger(
+		logger.SetLogLevel(zap.InfoLevel),
+		logger.SetLogMaxSize(100),
+		logger.SetLogMaxAge(30),
+		logger.SetLogCompress(true),
+		logger.SetConsoleWriterSyncer(true),
+		logger.SetLogFilename("bigcache.log"),
+		logger.SetLogMaxBackups(10),
+		logger.SetLogLevelKey("bigcache"),
+	)
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             1,
+		LifeWindow:         5 * time.Second,
+		MaxEntriesInWindow: 10,
+		MaxEntrySize:       256,
+		Verbose:            true,
+		Logger:             logger,
+		Hasher:             hashStub(5),
+	})
+
+	//when
+	cache.Append("a", []byte("1"))
+	fmt.Println(cache.Stats().Collisions)
+	cachedValue, err := cache.Get("a")
+	fmt.Println(cache.Stats().Collisions)
+	//then
+	noError(t, err)
+	assertEqual(t, []byte("1"), cachedValue)
+
+	// when
+	err = cache.Append("b", []byte("2"))
+
+	// then
+	noError(t, err)
+	assertEqual(t, cache.Stats().Collisions, int64(1))
+	cachedValue, err = cache.Get("b")
+	noError(t, err)
+	assertEqual(t, []byte("2"), cachedValue)
+
+}
+
+func TestNewBigcacheValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		cfg  Config
+		want string
+	}{
+		{
+			cfg:  Config{Shards: 18},
+			want: "shards number must be power of two",
+		},
+		{
+			cfg:  Config{Shards: 16, MaxEntriesInWindow: -1},
+			want: "MaxEntriesInWindow must be >= 0",
+		},
+		{
+			cfg:  Config{Shards: 16, MaxEntrySize: -1},
+			want: "MaxEntrySize must be >= 0",
+		},
+		{
+			cfg:  Config{Shards: 16, HardMaxCacheSize: -1},
+			want: "HardMaxCacheSize must be >= 0",
+		},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			cache, error := New(context.Background(), tc.cfg)
+
+			assertEqual(t, (*BigCache)(nil), cache)
+			assertEqual(t, tc.want, error.Error())
+		})
+	}
+}
+
+func TestEntryNotFound(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             16,
+		LifeWindow:         5 * time.Second,
+		MaxEntriesInWindow: 10,
+		MaxEntrySize:       256,
+	})
+
+	// when
+	_, err := cache.Get("nonExistingKey")
+
+	// then
+	assertEqual(t, ErrEntryNotFound, err)
+}
+
+func TestCleanShouldEvictAll(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             4,
+		LifeWindow:         time.Second,
+		CleanWindow:        time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       256,
+	})
+
+	// when
+	cache.Set("key", []byte("value"))
+	<-time.After(3 * time.Second)
+	value, err := cache.Get("key")
+
+	// then
+	assertEqual(t, ErrEntryNotFound, err)
+	assertEqual(t, value, []byte(nil))
+}
+
+func TestOnRemoveGetEntryStats(t *testing.T) {
+	t.Parallel()
+
+	// given
+	count := uint32(0)
+	onRemove := func(key string, entry []byte, keyMetadata Metadata) {
+		count = keyMetadata.RequestCount
+	}
+	c := Config{
+		Shards:               1,
+		LifeWindow:           time.Second,
+		MaxEntriesInWindow:   1,
+		MaxEntrySize:         256,
+		OnRemoveWithMetadata: onRemove,
+		StatsEnabled:         true,
+	}.OnRemoveFilterSet(Deleted, NoSpace)
+
+	cache, _ := newBigCache(context.Background(), c, &clock.SystemClock{})
+
+	// when
+	cache.Set("key", []byte("value"))
+
+	for i := 0; i < 100; i++ {
+		_, err := cache.Get("key")
+		if err != nil {
+			return
+		}
+	}
+
+	cache.Delete("key")
+
+	// then
+	assertEqual(t, uint32(100), count)
+}
+
+func TestCacheLen(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             8,
+		LifeWindow:         time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       256,
+	})
+	keys := 1337
+
+	// when
+	for i := 0; i < keys; i++ {
+		cache.Set(fmt.Sprintf("key%d", i), []byte("value"))
+	}
+
+	// then
+	assertEqual(t, keys, cache.Len())
+}
+
+func TestCacheCapacity(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             8,
+		LifeWindow:         time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       256,
+	})
+	keys := 1337
+
+	// when
+	for i := 0; i < keys; i++ {
+		cache.Set(fmt.Sprintf("key%d", i), []byte("value"))
+	}
+
+	// then
+	assertEqual(t, keys, cache.Len())
+	assertEqual(t, 40960, cache.Capacity())
+}
+
+func TestCacheInitialCapacity(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             1,
+		LifeWindow:         time.Second,
+		MaxEntriesInWindow: 2 * 1024,
+		HardMaxCacheSize:   1,
+		MaxEntrySize:       1024,
+	})
+
+	assertEqual(t, 0, cache.Len())
+	assertEqual(t, 1024*1024, cache.Capacity())
+
+	keys := 1024 * 1024
+
+	// when
+	for i := 0; i < keys; i++ {
+		cache.Set(fmt.Sprintf("key%d", i), []byte("value"))
+	}
+
+	// then
+	assertEqual(t, true, cache.Len() < keys)
+	assertEqual(t, 1024*1024, cache.Capacity())
+}
+
+func TestRemoveEntriesWhenShardIsFull(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             1,
+		LifeWindow:         100 * time.Second,
+		MaxEntriesInWindow: 100,
+		MaxEntrySize:       256,
+		HardMaxCacheSize:   1,
+	})
+
+	value := blob('a', 1024*300)
+
+	// when
+	cache.Set("key", value)
+	cache.Set("key", value)
+	cache.Set("key", value)
+	cache.Set("key", value)
+	cache.Set("key", value)
+	cachedValue, err := cache.Get("key")
+
+	// then
+	noError(t, err)
+	assertEqual(t, value, cachedValue)
+}
+
+func TestCacheStats(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             8,
+		LifeWindow:         time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       256,
+	})
+
+	// when
+	for i := 0; i < 100; i++ {
+		cache.Set(fmt.Sprintf("key%d", i), []byte("value"))
+	}
+
+	for i := 0; i < 10; i++ {
+		value, err := cache.Get(fmt.Sprintf("key%d", i))
+		noError(t, err)
+		assertEqual(t, string(value), "value")
+	}
+	for i := 100; i < 110; i++ {
+		_, err := cache.Get(fmt.Sprintf("key%d", i))
+		assertEqual(t, ErrEntryNotFound, err)
+	}
+	for i := 10; i < 20; i++ {
+		err := cache.Delete(fmt.Sprintf("key%d", i))
+		noError(t, err)
+	}
+	for i := 110; i < 120; i++ {
+		err := cache.Delete(fmt.Sprintf("key%d", i))
+		assertEqual(t, ErrEntryNotFound, err)
+	}
+
+	// then
+	stats := cache.Stats()
+	assertEqual(t, stats.Hits, int64(10))
+	assertEqual(t, stats.Misses, int64(10))
+	assertEqual(t, stats.DelHits, int64(10))
+	assertEqual(t, stats.DelMisses, int64(10))
+}
+func TestCacheEntryStats(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             8,
+		LifeWindow:         time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       256,
+		StatsEnabled:       true,
+	})
+
+	cache.Set("key0", []byte("value"))
+
+	for i := 0; i < 10; i++ {
+		_, err := cache.Get("key0")
+		noError(t, err)
+	}
+
+	// then
+	keyMetadata := cache.KeyMetadata("key0")
+	assertEqual(t, uint32(10), keyMetadata.RequestCount)
+}
+
+func TestCacheRestStats(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             8,
+		LifeWindow:         time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       256,
+	})
+
+	// when
+	for i := 0; i < 100; i++ {
+		cache.Set(fmt.Sprintf("key%d", i), []byte("value"))
+	}
+
+	for i := 0; i < 10; i++ {
+		value, err := cache.Get(fmt.Sprintf("key%d", i))
+		noError(t, err)
+		assertEqual(t, string(value), "value")
+	}
+	for i := 100; i < 110; i++ {
+		_, err := cache.Get(fmt.Sprintf("key%d", i))
+		assertEqual(t, ErrEntryNotFound, err)
+	}
+	for i := 10; i < 20; i++ {
+		err := cache.Delete(fmt.Sprintf("key%d", i))
+		noError(t, err)
+	}
+	for i := 110; i < 120; i++ {
+		err := cache.Delete(fmt.Sprintf("key%d", i))
+		assertEqual(t, ErrEntryNotFound, err)
+	}
+
+	stats := cache.Stats()
+	assertEqual(t, stats.Hits, int64(10))
+	assertEqual(t, stats.Misses, int64(10))
+	assertEqual(t, stats.DelHits, int64(10))
+	assertEqual(t, stats.DelMisses, int64(10))
+
+	//then
+	cache.ResetStats()
+	stats = cache.Stats()
+	assertEqual(t, stats.Hits, int64(0))
+	assertEqual(t, stats.Misses, int64(0))
+	assertEqual(t, stats.DelHits, int64(0))
+	assertEqual(t, stats.DelMisses, int64(0))
+}
+
+func TestCacheDel(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), DefaultConfig(time.Second))
+
+	// when
+	err := cache.Delete("nonExistingKey")
+
+	// then
+	assertEqual(t, err, ErrEntryNotFound)
+
+	// and when
+	cache.Set("existingKey", nil)
+	err = cache.Delete("existingKey")
+	cachedValue, _ := cache.Get("existingKey")
+
+	// then
+	noError(t, err)
+	assertEqual(t, 0, len(cachedValue))
+}
+
+// TestCacheDelRandomly does simultaneous deletes, puts and gets, to check for corruption errors.
+func TestCacheDelRandomly(t *testing.T) {
+	t.Parallel()
+	logger, err := logger.CreateProductZapLogger(
+		logger.SetLogLevel(zap.InfoLevel),
+		logger.SetLogMaxSize(100),
+		logger.SetLogMaxAge(30),
+		logger.SetLogCompress(true),
+		logger.SetConsoleWriterSyncer(true),
+		logger.SetLogFilename("bigcache.log"),
+		logger.SetLogMaxBackups(10),
+		logger.SetLogLevelKey("bigcache"),
+	)
+	if err != nil {
+		panic(err)
+	}
+	c := Config{
+		Shards:             1,
+		LifeWindow:         time.Second,
+		CleanWindow:        0,
+		MaxEntriesInWindow: 10,
+		MaxEntrySize:       10,
+		Verbose:            false,
+		Hasher:             hash.NewFnv64(),
+		HardMaxCacheSize:   1,
+		StatsEnabled:       true,
+		Logger:             logger,
+	}
+
+	cache, _ := New(context.Background(), c)
+	var wg sync.WaitGroup
+	var ntest = 800000
+	wg.Add(3)
+	go func() {
+		for i := 0; i < ntest; i++ {
+			r := uint8(rand.Int())
+			key := fmt.Sprintf("thekey%d", r)
+
+			cache.Delete(key)
+		}
+		wg.Done()
+	}()
+	valueLen := 1024
+	go func() {
+		val := make([]byte, valueLen)
+		for i := 0; i < ntest; i++ {
+			r := byte(rand.Int())
+			key := fmt.Sprintf("thekey%d", r)
+
+			for j := 0; j < len(val); j++ {
+				val[j] = r
+			}
+			cache.Set(key, val)
+		}
+		wg.Done()
+	}()
+	go func() {
+		val := make([]byte, valueLen)
+		for i := 0; i < ntest; i++ {
+			r := byte(rand.Int())
+			key := fmt.Sprintf("thekey%d", r)
+
+			for j := 0; j < len(val); j++ {
+				val[j] = r
+			}
+			if got, err := cache.Get(key); err == nil && !bytes.Equal(got, val) {
+				t.Errorf("got %s ->\n %x\n expected:\n %x\n ", key, got, val)
+			}
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+}
+
+func TestWriteAndReadParallelSameKeyWithStats(t *testing.T) {
+	t.Parallel()
+
+	c := DefaultConfig(10 * time.Second)
+	c.StatsEnabled = true
+
+	cache, _ := New(context.Background(), c)
+	var wg sync.WaitGroup
+	ntest := 1000
+	n := 10
+	wg.Add(n)
+	key := "key"
+	value := blob('a', 1024)
+	for i := 0; i < ntest; i++ {
+		assertEqual(t, nil, cache.Set(key, value))
+	}
+	for j := 0; j < n; j++ {
+		go func() {
+			for i := 0; i < ntest; i++ {
+				v, err := cache.Get(key)
+				assertEqual(t, nil, err)
+				assertEqual(t, value, v)
+			}
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+
+	assertEqual(t, Stats{Hits: int64(n * ntest)}, cache.Stats())
+	assertEqual(t, ntest*n, int(cache.KeyMetadata(key).RequestCount))
+}
+
+func TestCacheReset(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             8,
+		LifeWindow:         time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       256,
+	})
+	keys := 1337
+
+	// when
+	for i := 0; i < keys; i++ {
+		cache.Set(fmt.Sprintf("key%d", i), []byte("value"))
+	}
+
+	// then
+	assertEqual(t, keys, cache.Len())
+
+	// and when
+	cache.Reset()
+
+	// then
+	assertEqual(t, 0, cache.Len())
+
+	// and when
+	for i := 0; i < keys; i++ {
+		cache.Set(fmt.Sprintf("key%d", i), []byte("value"))
+	}
+
+	// then
+	assertEqual(t, keys, cache.Len())
+}
+
+func TestIterateOnResetCache(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             8,
+		LifeWindow:         time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       256,
+	})
+	keys := 1337
+
+	// when
+	for i := 0; i < keys; i++ {
+		cache.Set(fmt.Sprintf("key%d", i), []byte("value"))
+	}
+	cache.Reset()
+
+	// then
+	iterator := cache.Iterator()
+
+	assertEqual(t, false, iterator.SetNext())
+}
+
+func TestGetOnResetCache(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             8,
+		LifeWindow:         time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       256,
+	})
+	keys := 1337
+
+	// when
+	for i := 0; i < keys; i++ {
+		cache.Set(fmt.Sprintf("key%d", i), []byte("value"))
+	}
+
+	cache.Reset()
+
+	// then
+	value, err := cache.Get("key1")
+
+	assertEqual(t, err, ErrEntryNotFound)
+	assertEqual(t, value, []byte(nil))
+}
+
+func TestOldestEntryDeletionWhenMaxCacheSizeIsReached(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             1,
+		LifeWindow:         5 * time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       1,
+		HardMaxCacheSize:   1,
+	})
+
+	// when
+	cache.Set("key1", blob('a', 1024*400))
+	cache.Set("key2", blob('b', 1024*400))
+	cache.Set("key3", blob('c', 1024*800))
+
+	_, key1Err := cache.Get("key1")
+	_, key2Err := cache.Get("key2")
+	entry3, _ := cache.Get("key3")
+
+	// then
+	assertEqual(t, key1Err, ErrEntryNotFound)
+	assertEqual(t, key2Err, ErrEntryNotFound)
+	assertEqual(t, blob('c', 1024*800), entry3)
+}
+
+func TestRetrievingEntryShouldCopy(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             1,
+		LifeWindow:         5 * time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       1,
+		HardMaxCacheSize:   1,
+	})
+	cache.Set("key1", blob('a', 1024*400))
+	value, key1Err := cache.Get("key1")
+
+	// when
+	// override queue
+	cache.Set("key2", blob('b', 1024*400))
+	cache.Set("key3", blob('c', 1024*400))
+	cache.Set("key4", blob('d', 1024*400))
+	cache.Set("key5", blob('d', 1024*400))
+
+	// then
+	noError(t, key1Err)
+	assertEqual(t, blob('a', 1024*400), value)
+}
+
+func TestEntryBiggerThanMaxShardSizeError(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             1,
+		LifeWindow:         5 * time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       1,
+		HardMaxCacheSize:   1,
+	})
+
+	// when
+	err := cache.Set("key1", blob('a', 1024*1025))
+
+	// then
+	assertEqual(t, "entry is bigger than max shard size", err.Error())
+}
+
+func TestHashCollision(t *testing.T) {
+	t.Parallel()
+
+	logger, err := logger.CreateProductZapLogger(
+		logger.SetLogLevel(zap.InfoLevel),
+		logger.SetLogMaxSize(100),
+		logger.SetLogMaxAge(30),
+		logger.SetLogCompress(true),
+		logger.SetConsoleWriterSyncer(true),
+		logger.SetLogFilename("bigcache.log"),
+		logger.SetLogMaxBackups(10),
+		logger.SetLogLevelKey("bigcache"),
+	)
+	if err != nil {
+		panic(err)
+	}
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             16,
+		LifeWindow:         5 * time.Second,
+		MaxEntriesInWindow: 10,
+		MaxEntrySize:       256,
+		Verbose:            true,
+		Hasher:             hashStub(5),
+		Logger:             logger,
+	})
+
+	// when
+	cache.Set("liquid", []byte("value"))
+	cachedValue, err := cache.Get("liquid")
+
+	// then
+	noError(t, err)
+	assertEqual(t, []byte("value"), cachedValue)
+
+	// when
+	cache.Set("costarring", []byte("value 2"))
+	cachedValue, err = cache.Get("costarring")
+
+	// then
+	noError(t, err)
+	assertEqual(t, []byte("value 2"), cachedValue)
+
+	// when
+	cachedValue, err = cache.Get("liquid")
+
+	// then
+	assertEqual(t, ErrEntryNotFound, err)
+	assertEqual(t, []byte(nil), cachedValue)
+
+	assertEqual(t, cache.Stats().Collisions, int64(1))
+}
+
+func TestNilValueCaching(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             1,
+		LifeWindow:         5 * time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       1,
+		HardMaxCacheSize:   1,
+	})
+
+	// when
+	cache.Set("Kierkegaard", []byte{})
+	cachedValue, err := cache.Get("Kierkegaard")
+
+	// then
+	noError(t, err)
+	assertEqual(t, []byte{}, cachedValue)
+
+	// when
+	cache.Set("Sartre", nil)
+	cachedValue, err = cache.Get("Sartre")
+
+	// then
+	noError(t, err)
+	assertEqual(t, []byte{}, cachedValue)
+
+	// when
+	cache.Set("Nietzsche", []byte(nil))
+	cachedValue, err = cache.Get("Nietzsche")
+
+	// then
+	noError(t, err)
+	assertEqual(t, []byte{}, cachedValue)
+}
+
+func TestClosing(t *testing.T) {
+	// given
+	config := Config{
+		CleanWindow: time.Minute,
+		Shards:      1,
+		LifeWindow:  1 * time.Second,
+	}
+	startGR := runtime.NumGoroutine()
+
+	// when
+	for i := 0; i < 100; i++ {
+		cache, _ := New(context.Background(), config)
+		cache.Close()
+	}
+
+	// wait till all goroutines are stopped.
+	time.Sleep(200 * time.Millisecond)
+
+	// then
+	endGR := runtime.NumGoroutine()
+
+	fmt.Printf("startGR: %d, endGR: %d", startGR, endGR)
+	assertEqual(t, true, endGR >= startGR)
+	assertEqual(t, true, math.Abs(float64(endGR-startGR)) < 25)
+}
+
+func TestEntryNotPresent(t *testing.T) {
+	t.Parallel()
+
+	// given
+	cache, _ := newBigCache(context.Background(), Config{
+		Shards:             1,
+		LifeWindow:         5 * time.Second,
+		MaxEntriesInWindow: 1,
+		MaxEntrySize:       1,
+		HardMaxCacheSize:   1,
+	}, &clock.SystemClock{})
+
+	// when
+	value, resp, err := cache.GetWithInfo("blah")
+	assertEqual(t, ErrEntryNotFound, err)
+	assertEqual(t, resp.EntryStatus, RemoveReason(0))
+	assertEqual(t, cache.Stats().Misses, int64(1))
+	assertEqual(t, []byte(nil), value)
+}
+
+func TestBigCache_GetWithInfoCollision(t *testing.T) {
+	t.Parallel()
+
+	log, err := logger.CreateProductZapLogger(
+		logger.SetLogLevel(zap.InfoLevel),
+		logger.SetLogMaxSize(100),
+		logger.SetLogMaxAge(30),
+		logger.SetLogCompress(true),
+		logger.SetConsoleWriterSyncer(true),
+		logger.SetLogFilename("bigcache.log"),
+		logger.SetLogMaxBackups(10),
+		logger.SetLogLevelKey("bigcache"),
+	)
+	// given
+	cache, _ := New(context.Background(), Config{
+		Shards:             1,
+		LifeWindow:         5 * time.Second,
+		MaxEntriesInWindow: 10,
+		MaxEntrySize:       256,
+		Verbose:            true,
+		Hasher:             hashStub(5),
+		Logger:             log,
+	})
+
+	//when
+	cache.Set("a", []byte("1"))
+	cachedValue, resp, err := cache.GetWithInfo("a")
+
+	// then
+	noError(t, err)
+	assertEqual(t, []byte("1"), cachedValue)
+	assertEqual(t, Response{}, resp)
+
+	// when
+	cachedValue, resp, err = cache.GetWithInfo("b")
+
+	// then
+	assertEqual(t, []byte(nil), cachedValue)
+	assertEqual(t, Response{}, resp)
+	assertEqual(t, ErrEntryNotFound, err)
+	assertEqual(t, cache.Stats().Collisions, int64(1))
+
+}
+
+type mockedLogger struct {
+	lastFormat string
+	lastArgs   []interface{}
+}
+
+func (ml *mockedLogger) Printf(format string, v ...interface{}) {
+	ml.lastFormat = format
+	ml.lastArgs = v
+}
+
+type mockedClock struct {
+	value int64
+}
+
+func (mc *mockedClock) Epoch() int64 {
+	return mc.value
+}
+
+func (mc *mockedClock) set(value int64) {
+	mc.value = value
+}
+
+func blob(char byte, len int) []byte {
+	return bytes.Repeat([]byte{char}, len)
+}
+
+func TestCache_SetWithoutCleanWindow(t *testing.T) {
+
+	opt := DefaultConfig(time.Second)
+	opt.CleanWindow = 0
+	opt.HardMaxCacheSize = 1
+	bc, _ := New(context.Background(), opt)
+
+	err := bc.Set("2225", make([]byte, 200))
+	if nil != err {
+		t.Error(err)
+		t.FailNow()
+	}
+}
+
+func TestRemoveNonExpiredData(t *testing.T) {
+	onRemove := func(key string, entry []byte, reason RemoveReason) {
+		if reason != Deleted {
+			if reason == Expired {
+				t.Errorf("[%d]Expired OnRemove [%s]\n", reason, key)
+				t.FailNow()
+			} else {
+				time.Sleep(time.Second)
+			}
+		}
+	}
+
+	config := DefaultConfig(10 * time.Minute)
+	config.HardMaxCacheSize = 1
+	config.MaxEntrySize = 1024
+	config.MaxEntriesInWindow = 1024
+	config.OnRemoveWithReason = onRemove
+	cache, err := New(context.Background(), config)
+	noError(t, err)
+	defer func() {
+		err := cache.Close()
+		noError(t, err)
+	}()
+
+	data := func(l int) []byte {
+		m := make([]byte, l)
+		_, err := rand.Read(m)
+		noError(t, err)
+		return m
+	}
+
+	for i := 0; i < 50; i++ {
+		key := fmt.Sprintf("key_%d", i)
+		//key := "key1"
+		err := cache.Set(key, data(800))
+		noError(t, err)
+	}
+}

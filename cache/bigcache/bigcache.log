@@ -1,0 +1,9 @@
+{"bigcache":"info","ts":"2025-10-24T18:43:50.075+0800","caller":"bigcache/shard.go:195","msg":"Collision detected","key":"b","wrappedKey":"a"}
+{"bigcache":"info","ts":"2025-10-24T18:46:30.765+0800","caller":"bigcache/shard.go:195","msg":"Collision detected","key":"b","wrappedKey":"a"}
+{"bigcache":"info","ts":"2025-10-24T18:56:40.313+0800","caller":"bigcache/shard.go:101","msg":"Collision detected","key":"b","hashedKey":5,"entryKey":"a"}
+{"bigcache":"info","ts":"2025-10-24T18:56:57.183+0800","caller":"bigcache/shard.go:101","msg":"Collision detected","key":"b","hashedKey":5,"entryKey":"a"}
+{"bigcache":"info","ts":"2025-10-24T18:56:57.188+0800","caller":"bigcache/shard.go:195","msg":"Collision detected","key":"b","wrappedKey":"a"}
+{"bigcache":"info","ts":"2025-10-24T18:57:34.928+0800","caller":"bigcache/shard.go:139","msg":"Collision detected","key":"liquid","hashedKey":5,"entryKey":"costarring"}
+{"bigcache":"info","ts":"2025-10-24T18:57:53.844+0800","caller":"bigcache/shard.go:101","msg":"Collision detected","key":"b","hashedKey":5,"entryKey":"a"}
+{"bigcache":"info","ts":"2025-10-24T18:57:53.844+0800","caller":"bigcache/shard.go:139","msg":"Collision detected","key":"liquid","hashedKey":5,"entryKey":"costarring"}
+{"bigcache":"info","ts":"2025-10-24T18:57:53.848+0800","caller":"bigcache/shard.go:195","msg":"Collision detected","key":"b","wrappedKey":"a"}
