@@ -6,7 +6,7 @@ package math
 // ~int 的作用是底层类型是 int 也能兼容，比如 type MyInt int MyInt类型也包含在Integer中
 type Integer interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64 |
-	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr
 }
 
 // IsPowerOfTwo 判断一个整数是否为2的幂次方
