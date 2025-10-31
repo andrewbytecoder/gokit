@@ -3,9 +3,11 @@ module github.com/andrewbytecoder/gokit
 go 1.25.1
 
 require (
+	github.com/benbjohnson/clock v1.3.5
 	github.com/fatih/color v1.18.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
+	go.uber.org/atomic v1.11.0
 	go.uber.org/zap v1.27.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
