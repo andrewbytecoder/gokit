@@ -1,4 +1,4 @@
-package channel
+package concurrent
 
 import (
 	"testing"
@@ -27,15 +27,5 @@ func TestChannel(t *testing.T) {
 	duration := time.Since(start)
 	if duration < 1*time.Second {
 		t.Fatalf("should take about 1s, but actually %s", duration)
-	}
-}
-
-func TestPipeline(t *testing.T) {
-	done := make(chan interface{})
-	intStream := Generator(done, 1, 2, 3, 4, 5)
-	defer close(done)
-	pipeline := Multiply(done, Add(done, Multiply(done, intStream, 2), 1), 2)
-	for v := range pipeline {
-		t.Log(v)
 	}
 }
