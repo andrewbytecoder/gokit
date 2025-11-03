@@ -19,6 +19,7 @@ type Clock interface {
 	After(d time.Duration) <-chan time.Time
 	AfterFunc(d time.Duration, f func()) *Timer
 	Now() time.Time
+	Epoch() int64
 	Since(t time.Time) time.Duration
 	Until(t time.Time) time.Duration
 	Sleep(d time.Duration)
@@ -45,6 +46,7 @@ func (c *clock) AfterFunc(d time.Duration, f func()) *Timer {
 
 func (c *clock) Now() time.Time { return time.Now() }
 
+func (c *clock) Epoch() int64                    { return time.Now().Unix() }
 func (c *clock) Since(t time.Time) time.Duration { return time.Since(t) }
 
 func (c *clock) Until(t time.Time) time.Duration { return time.Until(t) }
@@ -176,6 +178,9 @@ func (m *Mock) Now() time.Time {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.now
+}
+func (m *Mock) Epoch() int64 {
+	return m.Now().Unix()
 }
 
 // Since returns time since `t` using the mock clock's wall time.

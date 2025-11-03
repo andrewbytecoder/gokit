@@ -1,3 +1,5 @@
+//go:build ((unix && !android) || (js && wasm) || wasip1) && ((!cgo && !darwin) || osusergo)
+
 package lockedfile
 
 import (

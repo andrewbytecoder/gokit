@@ -298,7 +298,7 @@ func TestOnRemoveGetEntryStats(t *testing.T) {
 		StatsEnabled:         true,
 	}.OnRemoveFilterSet(Deleted, NoSpace)
 
-	cache, _ := newBigCache(context.Background(), c, &clock.SystemClock{})
+	cache, _ := newBigCache(context.Background(), c, clock.New())
 
 	// when
 	cache.Set("key", []byte("value"))
@@ -939,7 +939,7 @@ func TestEntryNotPresent(t *testing.T) {
 		MaxEntriesInWindow: 1,
 		MaxEntrySize:       1,
 		HardMaxCacheSize:   1,
-	}, &clock.SystemClock{})
+	}, clock.New())
 
 	// when
 	value, resp, err := cache.GetWithInfo("blah")

@@ -38,7 +38,7 @@ type BigCache struct {
 //	*BigCache: BigCache实例指针
 //	error: 错误信息
 func New(ctx context.Context, config Config) (*BigCache, error) {
-	return newBigCache(ctx, config, clock.SystemClock{})
+	return newBigCache(ctx, config, clock.New())
 }
 
 // NewBigCache 创建 BigCache 实例的旧版本接口（向后兼容）
@@ -51,7 +51,7 @@ func New(ctx context.Context, config Config) (*BigCache, error) {
 //	*BigCache: BigCache实例指针
 //	error: 错误信息
 func NewBigCache(config Config) (*BigCache, error) {
-	return newBigCache(context.Background(), config, clock.SystemClock{})
+	return newBigCache(context.Background(), config, clock.New())
 }
 
 // newBigCache BigCache 的核心构造函数

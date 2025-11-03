@@ -1,6 +1,9 @@
 // Package filelock provides a platform-independent API for advisory file
 // locking. Calls to functions in this package on platforms that do not support
 // advisory locks will return errors for which IsNotSupported returns true.
+
+//go:build ((unix && !android) || (js && wasm) || wasip1) && ((!cgo && !darwin) || osusergo)
+
 package filelock
 
 import (
