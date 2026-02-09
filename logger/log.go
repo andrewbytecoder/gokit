@@ -98,7 +98,7 @@ func CreateProductZapLogger(op ...Option) (*zap.Logger, error) {
 	var multiWriteSyncer zapcore.WriteSyncer
 	// 组合写入器
 	if logConfig.consoleWriter {
-		consoleWriteSyncer := zapcore.AddSync(os.Stdout)
+		consoleWriteSyncer := zapcore.AddSync(os.Stdout) // 控制台输出
 		multiWriteSyncer = zapcore.NewMultiWriteSyncer(fileWriteSyncer, consoleWriteSyncer)
 	} else {
 		multiWriteSyncer = zapcore.NewMultiWriteSyncer(fileWriteSyncer)

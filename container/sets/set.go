@@ -1,13 +1,25 @@
+/*
+Copyright 2022 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package sets
 
 import (
 	"cmp"
-	"sort"
+	"slices"
 )
-
-// Empty is public since it is used by some internal API objects for conversions between external
-// string arrays and internal sets, and conversion logic requires public types today.
-type Empty struct{}
 
 // Set is a set of the same type elements, implemented via map[comparable]struct{} for minimal memory consumption.
 type Set[T comparable] map[T]Empty
@@ -176,22 +188,13 @@ func (s1 Set[T]) Equal(s2 Set[T]) bool {
 	return len(s1) == len(s2) && s1.IsSuperset(s2)
 }
 
-type sortableSliceOfGeneric[T cmp.Ordered] []T
-
-func (g sortableSliceOfGeneric[T]) Len() int           { return len(g) }
-func (g sortableSliceOfGeneric[T]) Less(i, j int) bool { return less[T](g[i], g[j]) }
-func (g sortableSliceOfGeneric[T]) Swap(i, j int)      { g[i], g[j] = g[j], g[i] }
-
 // List returns the contents as a sorted T slice.
 //
 // This is a separate function and not a method because not all types supported
 // by Generic are ordered and only those can be sorted.
 func List[T cmp.Ordered](s Set[T]) []T {
-	res := make(sortableSliceOfGeneric[T], 0, len(s))
-	for key := range s {
-		res = append(res, key)
-	}
-	sort.Sort(res)
+	res := s.UnsortedList()
+	slices.Sort(res)
 	return res
 }
 
@@ -217,8 +220,4 @@ func (s Set[T]) PopAny() (T, bool) {
 // Len returns the size of the set.
 func (s Set[T]) Len() int {
 	return len(s)
-}
-
-func less[T cmp.Ordered](lhs, rhs T) bool {
-	return lhs < rhs
 }
