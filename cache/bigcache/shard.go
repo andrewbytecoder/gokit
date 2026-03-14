@@ -5,8 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/andrewbytecoder/gokit/clock"
 	"github.com/andrewbytecoder/gokit/container/bytesqyeye"
+	"github.com/andrewbytecoder/gokit/timer/clock"
 	"go.uber.org/zap"
 )
 

@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/andrewbytecoder/gokit/conv/unit"
-	"github.com/andrewbytecoder/gokit/hash"
+	hash2 "github.com/andrewbytecoder/gokit/encoding/hash"
 	"github.com/andrewbytecoder/gokit/logger"
 	"go.uber.org/zap"
 )
@@ -28,7 +28,7 @@ type Config struct {
 	// Verbose mode prints information about new memory allocation
 	Verbose bool
 	// Hasher used to calculate hash values for cache keys.
-	Hasher hash.Hasher `json:"-"`
+	Hasher hash2.Hasher `json:"-"`
 	// HardMaxCacheSize is a limit for BytesQueue size in MB.
 	// It can protect application from consuming all available memory on machine, therefore from running OOM Killer.
 	// Default value is 0 which means unlimited size. When the limit is higher than 0 and reached then
@@ -83,7 +83,7 @@ func DefaultConfig(eviction time.Duration) Config {
 		MaxEntrySize:       500,
 		StatsEnabled:       false,
 		Verbose:            true,
-		Hasher:             hash.NewFnv64(),
+		Hasher:             hash2.NewFnv64(),
 		HardMaxCacheSize:   0,
 		Logger:             logger,
 	}

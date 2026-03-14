@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 )
 
 type Node struct {
@@ -84,4 +85,7 @@ func main() {
 	}
 	fmt.Println()
 	traverse(stack)
+	client := http.Server{}
+
+	client.Shutdown(nil)
 }

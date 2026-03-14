@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/andrewbytecoder/gokit/clock"
-	"github.com/andrewbytecoder/gokit/hash"
+	hash2 "github.com/andrewbytecoder/gokit/encoding/hash"
 	"github.com/andrewbytecoder/gokit/math"
+	"github.com/andrewbytecoder/gokit/timer/clock"
 )
 
 const (
@@ -21,7 +21,7 @@ type BigCache struct {
 	shards     []*cacheShard // 缓存分片数组
 	lifeWindow uint64        // 条目生存时间窗口（秒）
 	clock      clock.Clock   // 时钟接口，用于获取时间
-	hash       hash.Hasher   // 哈希函数接口
+	hash       hash2.Hasher  // 哈希函数接口
 	config     Config        // 缓存配置
 	shardMask  uint64        // 分片掩码，用于快速计算分片索引
 	close      chan struct{} // 关闭信号通道
@@ -85,7 +85,7 @@ func newBigCache(ctx context.Context, config Config, clock clock.Clock) (*BigCac
 	}
 
 	if config.Hasher == nil {
-		config.Hasher = hash.NewFnv64()
+		config.Hasher = hash2.NewFnv64()
 	}
 
 	cache := &BigCache{

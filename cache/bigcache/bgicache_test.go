@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrewbytecoder/gokit/clock"
-	"github.com/andrewbytecoder/gokit/hash"
+	"github.com/andrewbytecoder/gokit/encoding/hash"
 	"github.com/andrewbytecoder/gokit/logger"
+	"github.com/andrewbytecoder/gokit/timer/clock"
 	"go.uber.org/zap"
 )
 

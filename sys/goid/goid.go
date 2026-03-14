@@ -6,7 +6,7 @@ import (
 	"strconv"
 )
 
-func GetGoroutineId() uint64 {
+func GoroutineId() uint64 {
 	b := make([]byte, 64)
 	b = b[:runtime.Stack(b, false)]
 	// 栈信息格式: "goroutine 123 [running]:\n..."

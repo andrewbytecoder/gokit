@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andrewbytecoder/gokit/timer/clock"
 	"go.uber.org/atomic"
 
-	"github.com/andrewbytecoder/gokit/clock"
 	"github.com/stretchr/testify/assert"
 )
 

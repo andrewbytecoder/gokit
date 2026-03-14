@@ -17,7 +17,7 @@ type RecursiveMutex struct {
 
 // Lock 获取锁，支持同goroutine多次获取（重入）
 func (m *RecursiveMutex) Lock() {
-	g := goid.GetGoroutineId() // 获取当前goroutine ID
+	g := goid.GoroutineId() // 获取当前goroutine ID
 
 	// 如果当前锁的拥有者是当前goroutine，说明是重入
 	if atomic.LoadInt64(&m.owner) == int64(g) {
@@ -35,7 +35,7 @@ func (m *RecursiveMutex) Lock() {
 
 // Unlock 释放锁，只有当递归计数归零时才真正释放
 func (m *RecursiveMutex) Unlock() {
-	g := goid.GetGoroutineId() // 获取当前goroutine ID
+	g := goid.GoroutineId() // 获取当前goroutine ID
 
 	// 检查解锁操作是否由锁的拥有者执行
 	if atomic.LoadInt64(&m.owner) != int64(g) {

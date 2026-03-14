@@ -3,7 +3,7 @@ package ratelimit
 import (
 	"time"
 
-	"github.com/andrewbytecoder/gokit/clock"
+	"github.com/andrewbytecoder/gokit/timer/clock"
 )
 
 // Note: This file is inspired by:
