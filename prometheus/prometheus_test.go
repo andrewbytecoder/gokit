@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/andrewbytecoder/gokit/metrics"
+	"github.com/andrewbytecoder/gokit/prometheus/metrics"
 	stdprometheus "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )

@@ -1,7 +1,7 @@
 package prometheus
 
 import (
-	"github.com/andrewbytecoder/gokit/metrics"
+	"github.com/andrewbytecoder/gokit/prometheus/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

@@ -1,6 +1,6 @@
 package prometheus
 
-import "github.com/andrewbytecoder/gokit/metrics"
+import "github.com/andrewbytecoder/gokit/prometheus/metrics"
 
 type counterHistogram struct {
 	c metrics.Counter
