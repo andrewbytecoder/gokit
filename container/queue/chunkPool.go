@@ -1,4 +1,4 @@
-package deque
+package queue
 
 import (
 	"sync"

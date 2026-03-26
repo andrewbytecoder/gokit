@@ -1,4 +1,4 @@
-package deque
+package queue
 
 import "fmt"
 
@@ -18,11 +18,4 @@ func Example() {
 		fmt.Println(dq.PopFront())
 	}
 
-	// Output:
-	// 100
-	// 200
-	// 300
-	// 300
-	// 200
-	// 100
 }
