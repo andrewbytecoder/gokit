@@ -221,3 +221,7 @@ func (s Set[T]) PopAny() (T, bool) {
 func (s Set[T]) Len() int {
 	return len(s)
 }
+
+func less[T cmp.Ordered](lhs, rhs T) bool {
+	return lhs < rhs
+}

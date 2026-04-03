@@ -3,9 +3,9 @@ package bigcache
 import (
 	"time"
 
-	"github.com/andrewbytecoder/gokit/conv/unit"
 	hash2 "github.com/andrewbytecoder/gokit/encoding/hash"
 	"github.com/andrewbytecoder/gokit/logger"
+	"github.com/andrewbytecoder/gokit/swag"
 	"go.uber.org/zap"
 )
 
@@ -99,7 +99,7 @@ func (c Config) maximumShardSizeInBytes() int {
 	maxShardSize := 0
 
 	if c.HardMaxCacheSize > 0 {
-		maxShardSize = unit.ConvertMBToBytes(c.HardMaxCacheSize) / c.Shards
+		maxShardSize = swag.ConvertMBToBytes(c.HardMaxCacheSize) / c.Shards
 	}
 
 	return maxShardSize
