@@ -3,8 +3,11 @@
 package camelcase
 
 import (
+	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/iancoleman/strcase"
 )
 
 // Split splits the camelcase word and returns a list of words. It also
@@ -87,4 +90,13 @@ func Split(src string) (entries []string) {
 		}
 	}
 	return
+}
+
+func ToCamelCase(name string) string {
+	camelCase := strcase.ToLowerCamel(name)
+	if name == strings.ToUpper(name) {
+		camelCase = strcase.ToLowerCamel(strings.ToLower(name))
+	}
+
+	return camelCase
 }

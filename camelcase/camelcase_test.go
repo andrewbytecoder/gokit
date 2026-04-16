@@ -1,6 +1,10 @@
 package camelcase
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/iancoleman/strcase"
+)
 
 func ExampleSplit() {
 
@@ -44,4 +48,17 @@ func ExampleSplit() {
 	// "BöseÜberraschung" => []string{"Böse", "Überraschung"}
 	// "Two  spaces" => []string{"Two", "  ", "spaces"}
 	// "BadUTF8\xe2\xe2\xa1" => []string{"BadUTF8\xe2\xe2\xa1"}
+}
+
+func ExampleToCamelCase() {
+
+	camelStr := ToCamelCase("HTTP_PORT")
+	fmt.Println(camelStr)
+	envVarStyle := strcase.ToScreamingSnake(camelStr)
+	fmt.Println(envVarStyle) // 输出: HTTP_PORT
+
+	// 另一个例子
+	anotherStr := ToCamelCase("MY_APP_DATABASE_URL")
+	fmt.Println(anotherStr)
+	fmt.Println(strcase.ToScreamingSnake(anotherStr)) // 输出: MY_APP_DATABASE_URL
 }

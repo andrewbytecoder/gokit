@@ -7,6 +7,7 @@ require (
 	github.com/edsrzf/mmap-go v1.2.0
 	github.com/fatih/color v1.18.0
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/iancoleman/strcase v0.3.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/stretchr/testify v1.11.1
