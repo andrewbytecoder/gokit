@@ -156,6 +156,15 @@ func ConvertUint(str string) (uint, error) {
 	return uint(i), nil
 }
 
+// ConvertInt turn a string into an int
+func ConvertInt(str string) (int, error) {
+	i, err := strconv.ParseInt(str, 10, 0)
+	if err != nil {
+		return 0, err
+	}
+	return int(i), nil
+}
+
 // ConvertUint64 turn a string into an uint64
 func ConvertUint64(str string) (uint64, error) {
 	return strconv.ParseUint(str, 10, 64)
