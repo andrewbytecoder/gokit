@@ -15,8 +15,12 @@ type IRemoter interface {
 
 	// RunCmd executes a command on the remote host and returns combined output (stdout + stderr).
 	RunCmd(cmd string) ([]byte, error)
+	// RunCmds executes multiple commands in a single remote shell context.
+	RunCmds(cmds ...string) ([]byte, error)
 	// RunCmdContext executes a command with context, supporting timeout and cancellation.
 	RunCmdContext(ctx context.Context, cmd string) ([]byte, error)
+	// RunCmdsContext executes multiple commands in a single remote shell context with context support.
+	RunCmdsContext(ctx context.Context, cmds ...string) ([]byte, error)
 
 	// UploadFile uploads a local file to the remote host via SFTP.
 	UploadFile(localPath, remotePath string) error

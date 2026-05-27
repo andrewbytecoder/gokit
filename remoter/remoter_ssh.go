@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/melbahja/goph"
+	goph2 "github.com/andrewbytecoder/gokit/goph"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
@@ -40,7 +40,7 @@ type Remoter struct {
 	Timeout               time.Duration
 
 	mu         sync.Mutex
-	client     *goph.Client
+	client     *goph2.Client
 	sftpClient *sftp.Client
 }
 
@@ -138,7 +138,7 @@ func (r *Remoter) Connect() error {
 		return err
 	}
 
-	client, err := goph.NewConn(config)
+	client, err := goph2.NewConn(config)
 	if err != nil {
 		return fmt.Errorf("connect ssh %s:%d failed: %w", r.Host, r.Port, err)
 	}
@@ -183,6 +183,20 @@ func (r *Remoter) RunCmd(cmd string) ([]byte, error) {
 	return out, nil
 }
 
+// RunCmds executes multiple commands on the remote host in a single shell context.
+// It auto-connects if not already connected.
+func (r *Remoter) RunCmds(cmds ...string) ([]byte, error) {
+	client, err := r.ensureClient()
+	if err != nil {
+		return nil, err
+	}
+	out, err := client.RunCmds(cmds...)
+	if err != nil {
+		return out, fmt.Errorf("run remote commands failed: %w", err)
+	}
+	return out, nil
+}
+
 // RunCmdContext is like RunCmd but accepts a context for timeout and cancellation.
 func (r *Remoter) RunCmdContext(ctx context.Context, cmd string) ([]byte, error) {
 	client, err := r.ensureClient()
@@ -192,6 +206,19 @@ func (r *Remoter) RunCmdContext(ctx context.Context, cmd string) ([]byte, error)
 	out, err := client.RunContext(ctx, cmd)
 	if err != nil {
 		return out, fmt.Errorf("run remote command with context failed: %w", err)
+	}
+	return out, nil
+}
+
+// RunCmdsContext is like RunCmds but accepts a context for timeout and cancellation.
+func (r *Remoter) RunCmdsContext(ctx context.Context, cmds ...string) ([]byte, error) {
+	client, err := r.ensureClient()
+	if err != nil {
+		return nil, err
+	}
+	out, err := client.RunCmdsContext(ctx, cmds...)
+	if err != nil {
+		return out, fmt.Errorf("run remote commands with context failed: %w", err)
 	}
 	return out, nil
 }
@@ -424,7 +451,7 @@ func (r *Remoter) ReadFile(remotePath string) ([]byte, error) {
 	return content, nil
 }
 
-func (r *Remoter) buildConfig() (*goph.Config, error) {
+func (r *Remoter) buildConfig() (*goph2.Config, error) {
 	if strings.TrimSpace(r.Host) == "" {
 		return nil, errors.New("ssh host is required")
 	}
@@ -452,7 +479,7 @@ func (r *Remoter) buildConfig() (*goph.Config, error) {
 		timeout = defaultSSHTimeout
 	}
 
-	return &goph.Config{
+	return &goph2.Config{
 		User:     r.User,
 		Addr:     r.Host,
 		Port:     uint(port),
@@ -462,15 +489,15 @@ func (r *Remoter) buildConfig() (*goph.Config, error) {
 	}, nil
 }
 
-func (r *Remoter) buildAuth() (goph.Auth, error) {
+func (r *Remoter) buildAuth() (goph2.Auth, error) {
 	if strings.TrimSpace(r.PrivateKeyPath) != "" {
-		return goph.Key(r.PrivateKeyPath, r.PrivateKeyPassphrase)
+		return goph2.Key(r.PrivateKeyPath, r.PrivateKeyPassphrase)
 	}
 	if r.Password != "" {
-		return goph.KeyboardInteractive(r.Password), nil
+		return goph2.KeyboardInteractive(r.Password), nil
 	}
-	if goph.HasAgent() {
-		return goph.UseAgent()
+	if goph2.HasAgent() {
+		return goph2.UseAgent()
 	}
 	return nil, errors.New("no ssh auth method configured")
 }
@@ -480,12 +507,12 @@ func (r *Remoter) buildHostKeyCallback() (ssh.HostKeyCallback, error) {
 		return ssh.InsecureIgnoreHostKey(), nil
 	}
 	if strings.TrimSpace(r.KnownHostsPath) != "" {
-		return goph.KnownHosts(r.KnownHostsPath)
+		return goph2.KnownHosts(r.KnownHostsPath)
 	}
-	return goph.DefaultKnownHosts()
+	return goph2.DefaultKnownHosts()
 }
 
-func (r *Remoter) ensureClient() (*goph.Client, error) {
+func (r *Remoter) ensureClient() (*goph2.Client, error) {
 	r.mu.Lock()
 	client := r.client
 	r.mu.Unlock()
