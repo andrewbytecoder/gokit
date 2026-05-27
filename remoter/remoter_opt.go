@@ -33,13 +33,15 @@ type IRemoter interface {
 	// PathExists checks whether the given path (file or directory) exists on the remote host.
 	PathExists(remotePath string) (bool, error)
 
+	// CrateRemoteDir creates a remote directory recursively if needed.
+	CrateRemoteDir(remoteDir string) error
 	// DeleteFile deletes a file on the remote host.
 	DeleteFile(remotePath string) error
 	// DeleteDir recursively deletes a directory on the remote host.
 	DeleteDir(remotePath string) error
 
 	// WriteFile writes content to a remote file. Creates the file if it does not exist,
-	// overwrites it if it does (modify remote file).
+	// overwrites it if it does.
 	WriteFile(remotePath string, content []byte, perm os.FileMode) error
 	// ReadFile reads the content of a remote file.
 	ReadFile(remotePath string) ([]byte, error)

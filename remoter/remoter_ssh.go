@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -12,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	goph2 "github.com/andrewbytecoder/gokit/goph"
+	"github.com/andrewbytecoder/gokit/goph"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
@@ -36,11 +37,12 @@ type Remoter struct {
 	PrivateKeyPath        string
 	PrivateKeyPassphrase  string
 	KnownHostsPath        string
+	TrustUnknownHost      bool
 	InsecureIgnoreHostKey bool
 	Timeout               time.Duration
 
 	mu         sync.Mutex
-	client     *goph2.Client
+	client     *goph.Client
 	sftpClient *sftp.Client
 }
 
@@ -103,6 +105,14 @@ func SetInsecureIgnoreHostKey(ignore bool) options.Option {
 	}
 }
 
+// SetTrustUnknownHost is an option to auto-trust and persist an unknown host key
+// on first connection. Subsequent connections still verify the stored host key.
+func SetTrustUnknownHost(trust bool) options.Option {
+	return func(o interface{}) {
+		o.(*Remoter).TrustUnknownHost = trust
+	}
+}
+
 // SetTimeout is an option to set the SSH connection timeout.
 func SetTimeout(timeout time.Duration) options.Option {
 	return func(o interface{}) {
@@ -138,7 +148,7 @@ func (r *Remoter) Connect() error {
 		return err
 	}
 
-	client, err := goph2.NewConn(config)
+	client, err := r.connectWithConfig(config)
 	if err != nil {
 		return fmt.Errorf("connect ssh %s:%d failed: %w", r.Host, r.Port, err)
 	}
@@ -283,6 +293,21 @@ func (r *Remoter) UploadDir(localDir, remoteDir string) error {
 	})
 }
 
+// CrateRemoteDir creates a remote directory.
+// @param remoteDir remote directory path
+func (r *Remoter) CrateRemoteDir(remoteDir string) error {
+	sftpClient, err := r.ensureSFTP()
+	if err != nil {
+		return err
+	}
+
+	remoteDir = cleanRemotePath(remoteDir)
+	if err := sftpClient.MkdirAll(remoteDir); err != nil {
+		return fmt.Errorf("create remote dir %q failed: %w", remoteDir, err)
+	}
+	return nil
+}
+
 // DownloadFile downloads a single remote file to the local machine via SFTP.
 // Local parent directories are created automatically if they do not exist.
 func (r *Remoter) DownloadFile(remotePath, localPath string) error {
@@ -340,6 +365,7 @@ func (r *Remoter) PathExists(remotePath string) (bool, error) {
 	if os.IsNotExist(err) {
 		return false, nil
 	}
+	// The error is not caused by a non-existent path; it could be due to insufficient permissions, network issues, or other reasons.
 	return false, fmt.Errorf("stat remote path %q failed: %w", remotePath, err)
 }
 
@@ -451,7 +477,21 @@ func (r *Remoter) ReadFile(remotePath string) ([]byte, error) {
 	return content, nil
 }
 
-func (r *Remoter) buildConfig() (*goph2.Config, error) {
+func (r *Remoter) connectWithConfig(config *goph.Config) (*goph.Client, error) {
+	client, err := goph.NewConn(config)
+	if err == nil {
+		return client, nil
+	}
+	if !r.TrustUnknownHost || !isUnknownHostErr(err) {
+		return nil, err
+	}
+	if err := r.addCurrentHostKey(config); err != nil {
+		return nil, fmt.Errorf("trust unknown host %s:%d failed: %w", r.Host, r.Port, err)
+	}
+	return goph.NewConn(config)
+}
+
+func (r *Remoter) buildConfig() (*goph.Config, error) {
 	if strings.TrimSpace(r.Host) == "" {
 		return nil, errors.New("ssh host is required")
 	}
@@ -479,7 +519,7 @@ func (r *Remoter) buildConfig() (*goph2.Config, error) {
 		timeout = defaultSSHTimeout
 	}
 
-	return &goph2.Config{
+	return &goph.Config{
 		User:     r.User,
 		Addr:     r.Host,
 		Port:     uint(port),
@@ -489,15 +529,15 @@ func (r *Remoter) buildConfig() (*goph2.Config, error) {
 	}, nil
 }
 
-func (r *Remoter) buildAuth() (goph2.Auth, error) {
+func (r *Remoter) buildAuth() (goph.Auth, error) {
 	if strings.TrimSpace(r.PrivateKeyPath) != "" {
-		return goph2.Key(r.PrivateKeyPath, r.PrivateKeyPassphrase)
+		return goph.Key(r.PrivateKeyPath, r.PrivateKeyPassphrase)
 	}
 	if r.Password != "" {
-		return goph2.KeyboardInteractive(r.Password), nil
+		return goph.KeyboardInteractive(r.Password), nil
 	}
-	if goph2.HasAgent() {
-		return goph2.UseAgent()
+	if goph.HasAgent() {
+		return goph.UseAgent()
 	}
 	return nil, errors.New("no ssh auth method configured")
 }
@@ -507,12 +547,37 @@ func (r *Remoter) buildHostKeyCallback() (ssh.HostKeyCallback, error) {
 		return ssh.InsecureIgnoreHostKey(), nil
 	}
 	if strings.TrimSpace(r.KnownHostsPath) != "" {
-		return goph2.KnownHosts(r.KnownHostsPath)
+		return goph.KnownHosts(r.KnownHostsPath)
 	}
-	return goph2.DefaultKnownHosts()
+	return goph.DefaultKnownHosts()
 }
 
-func (r *Remoter) ensureClient() (*goph2.Client, error) {
+func (r *Remoter) addCurrentHostKey(config *goph.Config) error {
+	probeConfig := &ssh.ClientConfig{
+		User:    config.User,
+		Auth:    config.Auth,
+		Timeout: config.Timeout,
+		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			knownHostsPath := r.KnownHostsPath
+			if err := goph.AddKnownHost(hostname, remote, key, knownHostsPath); err != nil {
+				return err
+			}
+			return errHostKeyCaptured
+		},
+	}
+
+	conn, err := ssh.Dial("tcp", net.JoinHostPort(config.Addr, fmt.Sprint(config.Port)), probeConfig)
+	if err == nil {
+		_ = conn.Close()
+		return nil
+	}
+	if errors.Is(err, errHostKeyCaptured) {
+		return nil
+	}
+	return err
+}
+
+func (r *Remoter) ensureClient() (*goph.Client, error) {
 	r.mu.Lock()
 	client := r.client
 	r.mu.Unlock()
@@ -638,4 +703,10 @@ func normalizePerm(perm os.FileMode) os.FileMode {
 		return 0o644
 	}
 	return perm.Perm()
+}
+
+var errHostKeyCaptured = errors.New("host key captured")
+
+func isUnknownHostErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "knownhosts: key is unknown")
 }
