@@ -652,3 +652,429 @@ func TestMock_ReentrantDeadlock(t *testing.T) {
 
 func warn(v ...interface{})              { fmt.Fprintln(os.Stderr, v...) }
 func warnf(msg string, v ...interface{}) { fmt.Fprintf(os.Stderr, msg+"\n", v...) }
+
+// ==================== Additional Tests ====================
+
+// Ensure that the clock's Epoch returns a valid Unix timestamp.
+func TestClock_Epoch(t *testing.T) {
+	c := New()
+	epoch := c.Epoch()
+	if epoch <= 0 {
+		t.Fatalf("expected positive epoch, got: %d", epoch)
+	}
+	// Should be close to time.Now().Unix()
+	expected := time.Now().Unix()
+	diff := expected - epoch
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 1 {
+		t.Fatalf("epoch too far from expected: %d vs %d", epoch, expected)
+	}
+}
+
+// Ensure that the clock's Since works correctly.
+func TestClock_Since(t *testing.T) {
+	c := New()
+	start := c.Now()
+	time.Sleep(10 * time.Millisecond)
+	dur := c.Since(start)
+	if dur < 10*time.Millisecond || dur > 30*time.Millisecond {
+		t.Fatalf("Bad duration: %s", dur)
+	}
+}
+
+// Ensure that the clock's Until works correctly.
+func TestClock_Until(t *testing.T) {
+	c := New()
+	future := c.Now().Add(20 * time.Millisecond)
+	dur := c.Until(future)
+	if dur > 20*time.Millisecond || dur < 0 {
+		t.Fatalf("Bad duration: %s", dur)
+	}
+}
+
+// Ensure that Mock.Set correctly sets time and triggers timers.
+func TestMock_Set(t *testing.T) {
+	var ok int32
+	clock := NewMock()
+
+	clock.AfterFunc(5*time.Second, func() {
+		atomic.StoreInt32(&ok, 1)
+	})
+
+	clock.Set(time.Unix(10, 0))
+	if atomic.LoadInt32(&ok) != 1 {
+		t.Fatal("AfterFunc not triggered by Set")
+	}
+
+	if !clock.Now().Equal(time.Unix(10, 0)) {
+		t.Fatalf("expected time.Unix(10,0), got %v", clock.Now())
+	}
+}
+
+// Ensure that Mock.Set backward in time doesn't trigger future timers.
+func TestMock_Set_Backward(t *testing.T) {
+	clock := NewMock()
+	clock.Set(time.Unix(100, 0))
+	clock.Set(time.Unix(50, 0))
+
+	if !clock.Now().Equal(time.Unix(50, 0)) {
+		t.Fatalf("expected time.Unix(50,0), got %v", clock.Now())
+	}
+}
+
+// Ensure that Mock.Epoch returns correct value.
+func TestMock_Epoch(t *testing.T) {
+	clock := NewMock()
+	if clock.Epoch() != 0 {
+		t.Fatalf("expected epoch 0, got: %d", clock.Epoch())
+	}
+	clock.Add(10 * time.Second)
+	if clock.Epoch() != 10 {
+		t.Fatalf("expected epoch 10, got: %d", clock.Epoch())
+	}
+}
+
+// Ensure that mock timer can be stopped.
+func TestMock_Timer_Stop(t *testing.T) {
+	clock := NewMock()
+	timer := clock.Timer(10 * time.Second)
+
+	if !timer.Stop() {
+		t.Fatal("expected timer to be running")
+	}
+	if timer.Stop() {
+		t.Fatal("expected timer to be stopped")
+	}
+
+	clock.Add(10 * time.Second)
+	select {
+	case <-timer.C:
+		t.Fatal("unexpected send on stopped timer")
+	default:
+	}
+}
+
+// Ensure that mock timer can be reset.
+func TestMock_Timer_Reset(t *testing.T) {
+	clock := NewMock()
+	timer := clock.Timer(10 * time.Second)
+
+	if !timer.Reset(20 * time.Second) {
+		t.Fatal("expected timer to be running")
+	}
+	clock.Add(10 * time.Second)
+	select {
+	case <-timer.C:
+		t.Fatal("unexpected send too early")
+	default:
+	}
+	clock.Add(10 * time.Second)
+	select {
+	case <-timer.C:
+	default:
+		t.Fatal("expected timer to fire after 20s")
+	}
+}
+
+// Ensure that a stopped mock timer can be reset.
+func TestMock_Timer_Reset_Stopped(t *testing.T) {
+	clock := NewMock()
+	timer := clock.Timer(10 * time.Second)
+	timer.Stop()
+	timer.Reset(5 * time.Second)
+
+	clock.Add(5 * time.Second)
+	select {
+	case <-timer.C:
+	default:
+		t.Fatal("expected timer to fire after reset")
+	}
+}
+
+// Ensure that New() returns a Clock interface implementation.
+func TestNew_Returns_Clock(t *testing.T) {
+	var c Clock = New()
+	if c == nil {
+		t.Fatal("New() returned nil")
+	}
+}
+
+// Ensure that NewMock() returns a *Mock.
+func TestNewMock_NotNil(t *testing.T) {
+	m := NewMock()
+	if m == nil {
+		t.Fatal("NewMock() returned nil")
+	}
+}
+
+// ==================== Benchmark Tests ====================
+
+// BenchmarkClock_Now benchmarks the real clock's Now().
+func BenchmarkClock_Now(b *testing.B) {
+	c := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = c.Now()
+	}
+}
+
+// BenchmarkClock_Epoch benchmarks the real clock's Epoch().
+func BenchmarkClock_Epoch(b *testing.B) {
+	c := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = c.Epoch()
+	}
+}
+
+// BenchmarkClock_Since benchmarks the real clock's Since().
+func BenchmarkClock_Since(b *testing.B) {
+	c := New()
+	start := c.Now()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = c.Since(start)
+	}
+}
+
+// BenchmarkClock_Until benchmarks the real clock's Until().
+func BenchmarkClock_Until(b *testing.B) {
+	c := New()
+	future := c.Now().Add(time.Hour)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = c.Until(future)
+	}
+}
+
+// BenchmarkClock_Timer_Create benchmarks creating Timers on the real clock.
+func BenchmarkClock_Timer_Create(b *testing.B) {
+	c := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		timer := c.Timer(time.Millisecond)
+		timer.Stop()
+	}
+}
+
+// BenchmarkClock_Timer_Stop benchmarks stopping Timers on the real clock.
+func BenchmarkClock_Timer_Stop(b *testing.B) {
+	c := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		timer := c.Timer(time.Hour)
+		timer.Stop()
+	}
+}
+
+// BenchmarkClock_Timer_Reset benchmarks resetting Timers on the real clock.
+func BenchmarkClock_Timer_Reset(b *testing.B) {
+	c := New()
+	timer := c.Timer(time.Hour)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		timer.Reset(time.Hour)
+	}
+	timer.Stop()
+}
+
+// BenchmarkClock_Ticker_Create benchmarks creating Tickers on the real clock.
+func BenchmarkClock_Ticker_Create(b *testing.B) {
+	c := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ticker := c.Ticker(time.Hour)
+		ticker.Stop()
+	}
+}
+
+// BenchmarkClock_Ticker_Stop benchmarks stopping Tickers on the real clock.
+func BenchmarkClock_Ticker_Stop(b *testing.B) {
+	c := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ticker := c.Ticker(time.Hour)
+		ticker.Stop()
+	}
+}
+
+// BenchmarkClock_AfterFunc benchmarks AfterFunc on the real clock.
+func BenchmarkClock_AfterFunc(b *testing.B) {
+	c := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		timer := c.AfterFunc(time.Hour, func() {})
+		timer.Stop()
+	}
+}
+
+// BenchmarkMock_Now benchmarks the mock clock's Now().
+func BenchmarkMock_Now(b *testing.B) {
+	m := NewMock()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.Now()
+	}
+}
+
+// BenchmarkMock_Epoch benchmarks the mock clock's Epoch().
+func BenchmarkMock_Epoch(b *testing.B) {
+	m := NewMock()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.Epoch()
+	}
+}
+
+// BenchmarkMock_Since benchmarks the mock clock's Since().
+func BenchmarkMock_Since(b *testing.B) {
+	m := NewMock()
+	start := m.Now()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.Since(start)
+	}
+}
+
+// BenchmarkMock_Until benchmarks the mock clock's Until().
+func BenchmarkMock_Until(b *testing.B) {
+	m := NewMock()
+	future := m.Now().Add(time.Hour)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.Until(future)
+	}
+}
+
+// BenchmarkMock_Timer_Create benchmarks creating Timers on the mock clock.
+func BenchmarkMock_Timer_Create(b *testing.B) {
+	m := NewMock()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.Timer(time.Second)
+	}
+}
+
+// BenchmarkMock_Timer_Stop benchmarks stopping Timers on the mock clock.
+func BenchmarkMock_Timer_Stop(b *testing.B) {
+	m := NewMock()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		timer := m.Timer(time.Second)
+		timer.Stop()
+	}
+}
+
+// BenchmarkMock_Timer_Reset benchmarks resetting Timers on the mock clock.
+func BenchmarkMock_Timer_Reset(b *testing.B) {
+	m := NewMock()
+	timer := m.Timer(time.Second)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		timer.Reset(time.Second)
+	}
+}
+
+// BenchmarkMock_Ticker_Create benchmarks creating Tickers on the mock clock.
+func BenchmarkMock_Ticker_Create(b *testing.B) {
+	m := NewMock()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.Ticker(time.Second)
+	}
+}
+
+// BenchmarkMock_Ticker_Stop benchmarks stopping Tickers on the mock clock.
+func BenchmarkMock_Ticker_Stop(b *testing.B) {
+	m := NewMock()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ticker := m.Ticker(time.Second)
+		ticker.Stop()
+	}
+}
+
+// BenchmarkMock_Ticker_Reset benchmarks resetting Tickers on the mock clock.
+func BenchmarkMock_Ticker_Reset(b *testing.B) {
+	m := NewMock()
+	ticker := m.Ticker(time.Second)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ticker.Reset(time.Second)
+	}
+}
+
+// BenchmarkMock_AfterFunc benchmarks AfterFunc on the mock clock.
+func BenchmarkMock_AfterFunc(b *testing.B) {
+	m := NewMock()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		timer := m.AfterFunc(time.Second, func() {})
+		timer.Stop()
+	}
+}
+
+// BenchmarkMock_Add benchmarks Add on the mock clock.
+func BenchmarkMock_Add(b *testing.B) {
+	m := NewMock()
+	m.Timer(time.Microsecond) // register one timer
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.Add(time.Microsecond)
+	}
+}
+
+// BenchmarkMock_Set benchmarks Set on the mock clock.
+func BenchmarkMock_Set(b *testing.B) {
+	m := NewMock()
+	future := time.Unix(1000, 0)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.Set(future)
+	}
+}
+
+// BenchmarkMock_Add_ManyTimers benchmarks Add with many registered timers.
+func BenchmarkMock_Add_ManyTimers(b *testing.B) {
+	m := NewMock()
+	for i := 0; i < 100; i++ {
+		m.Timer(time.Duration(i+1) * time.Second)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.Add(time.Microsecond)
+	}
+}
+
+// BenchmarkMock_Timer_Sort benchmarks the timer list sorting cost.
+func BenchmarkMock_Timer_Sort(b *testing.B) {
+	m := NewMock()
+	for i := 0; i < b.N; i++ {
+		if i < 10000 {
+			m.Timer(time.Duration(i+1) * time.Second)
+		}
+	}
+	// Note: Add invokes sort; this measures the Add throughput with many timers.
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.Add(time.Microsecond)
+	}
+}
+
+// BenchmarkStd_Time_Now benchmarks the standard library time.Now for comparison.
+func BenchmarkStd_Time_Now(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_ = time.Now()
+	}
+}
+
+// BenchmarkStd_Time_Since benchmarks the standard library time.Since for comparison.
+func BenchmarkStd_Time_Since(b *testing.B) {
+	start := time.Now()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = time.Since(start)
+	}
+}
